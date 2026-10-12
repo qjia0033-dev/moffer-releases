@@ -10,7 +10,7 @@ on:
       version:
         description: Desktop package version
         required: true
-        default: '2.3.21'
+        default: '2.3.22'
         type: string
 
 permissions:
