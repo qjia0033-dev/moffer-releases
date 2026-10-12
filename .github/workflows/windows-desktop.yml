@@ -1,0 +1,113 @@
+name: Build Windows Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed private-source commit (40 hex characters)
+        required: true
+        type: string
+      version:
+        description: Desktop package version
+        required: true
+        default: '2.3.21'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-desktop-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Validate requested source
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:SOURCE_SHA -notmatch '^[a-fA-F0-9]{40}$') { throw 'An exact commit SHA is required' }
+          if ($env:PACKAGE_VERSION -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid package version' }
+      - name: Checkout reviewed private source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: qjia0033-dev/-mac
+          ref: ${{ inputs.source_sha }}
+          ssh-key: ${{ secrets.PRIVATE_SOURCE_SSH_KEY }}
+          persist-credentials: false
+          path: source
+      - name: Set up native Windows Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          architecture: x64
+      - name: Verify source and package version
+        working-directory: source
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: |
+          if ((git rev-parse HEAD).Trim() -ne $env:SOURCE_SHA.ToLower()) { throw 'Source commit mismatch' }
+          node -e "if(process.platform!=='win32'||process.arch!=='x64')throw Error('Native Windows x64 required');if(require('./desktop/package.json').version!==process.env.PACKAGE_VERSION)throw Error('Version mismatch')"
+      - name: Install test dependencies
+        working-directory: source
+        run: npm ci
+      - name: Install desktop dependencies
+        working-directory: source/desktop
+        run: npm ci
+      - name: Typecheck desktop
+        working-directory: source/desktop
+        run: npm run typecheck
+      - name: Build native speech and Windows installer
+        working-directory: source/desktop
+        run: npm run build:win -- --publish never
+      - name: Verify native speech and file dialog contracts
+        working-directory: source
+        run: |
+          node test/desktop-local-speech.mjs --native
+          node test/unit-desktop-file-dialog.mjs
+      - name: Verify speech inside the packaged application
+        working-directory: source
+        env:
+          MOFFER_SPEECH_RUNTIME: desktop/dist/win-unpacked/resources/app.asar.unpacked/resources/local-speech
+        run: node test/desktop-local-speech.mjs --native-only
+      - name: Verify actual packaged file dialogs and layout
+        working-directory: source
+        run: node test/desktop-packaged-dialogs.mjs
+      - name: Record provenance and exact outputs
+        working-directory: source
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: |
+          $files=@("desktop/dist/moffer-desktop-$env:PACKAGE_VERSION-setup.exe", "desktop/dist/moffer-desktop-$env:PACKAGE_VERSION-setup.exe.blockmap", 'desktop/dist/latest.yml')
+          foreach ($file in $files) { if (!(Test-Path -LiteralPath $file)) { throw "Missing installer output: $file" } }
+          @{ sourceCommit=$env:SOURCE_SHA; version=$env:PACKAGE_VERSION; platform='win32'; architecture='x64'; runId=$env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8 desktop/dist/build-info.json
+      - name: Keep installer and validation evidence only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-desktop-${{ inputs.version }}
+          path: |
+            source/desktop/dist/moffer-desktop-*-setup.exe
+            source/desktop/dist/moffer-desktop-*-setup.exe.blockmap
+            source/desktop/dist/latest.yml
+            source/desktop/dist/build-info.json
+            source/desktop/dist/dialog-checks/**
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+      - name: Keep failed dialog evidence
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-dialog-failure-${{ inputs.version }}
+          path: source/desktop/dist/dialog-checks/**
+          if-no-files-found: ignore
+          retention-days: 3
