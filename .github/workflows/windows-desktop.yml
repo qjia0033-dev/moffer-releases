@@ -81,7 +81,7 @@ jobs:
           if(!pcm)throw Error('PCM fixture missing');
           console.log(JSON.stringify({cpuCount:os.cpus().length,cpuModel:os.cpus()[0].model,pcmSeconds:pcm.length/32000,binariesMatch:true}));
           const started=Date.now(),events=[];let pending='',fed=false,timedOut=false;
-          const child=spawn(path.join(packaged,binary),[path.join(packaged,'ggml-small-q5_1.bin'),path.join(packaged,'ggml-silero-v6.2.0.bin'),'auto','800',''],{stdio:'pipe',windowsHide:true});
+          const child=spawn(path.join(packaged,binary),[path.join(packaged,'ggml-small-q5_1.bin'),path.join(packaged,'ggml-silero-v6.2.0.bin'),'auto','800',''],{stdio:'pipe',windowsHide:true,env:{...process.env,MOFFER_ASR_DIAGNOSTICS:'1'}});
           child.stderr.on('data',d=>process.stderr.write(d));
           child.stdout.setEncoding('utf8');
           child.stdout.on('data',d=>{pending+=d.toString();let at;while((at=pending.indexOf('\n'))>=0){const line=pending.slice(0,at);pending=pending.slice(at+1);const item=JSON.parse(line);events.push(item.type);console.log(JSON.stringify({elapsedMs:Date.now()-started,...item}));if(item.type==='ready'&&!fed){fed=true;child.stdin.end(pcm);}}});
