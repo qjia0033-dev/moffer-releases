@@ -67,19 +67,43 @@ jobs:
       - name: Build native speech and Windows installer
         working-directory: source/desktop
         run: npm run build:win -- --publish never
-      - name: Verify native speech and file dialog contracts
+      - name: Capture actual speech runtime timings
         working-directory: source
+        shell: pwsh
         run: |
-          node test/desktop-local-speech.mjs --native
-          node test/unit-desktop-file-dialog.mjs
+          @'
+          const fs=require('fs'),path=require('path'),os=require('os'),{spawn}=require('child_process'),crypto=require('crypto');
+          const runtime=path.resolve('desktop/resources/local-speech'),packaged=path.resolve('desktop/dist/win-unpacked/resources/app.asar.unpacked/resources/local-speech');
+          const hash=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          const binary='moffer-asr.exe'; if(hash(path.join(runtime,binary))!==hash(path.join(packaged,binary)))throw Error('Packaged speech binary differs');
+          const wave=fs.readFileSync('test/fixtures/local-speech-short.wav');let pcm;
+          for(let at=12;at+8<=wave.length;){const n=wave.readUInt32LE(at+4);if(wave.toString('ascii',at,at+4)==='data'){pcm=wave.subarray(at+8,at+8+n);break;}at+=8+n+(n%2);}
+          if(!pcm)throw Error('PCM fixture missing');
+          console.log(JSON.stringify({cpuCount:os.cpus().length,cpuModel:os.cpus()[0].model,pcmSeconds:pcm.length/32000,binariesMatch:true}));
+          const started=Date.now(),events=[];let pending='',fed=false,timedOut=false;
+          const child=spawn(path.join(packaged,binary),[path.join(packaged,'ggml-small-q5_1.bin'),path.join(packaged,'ggml-silero-v6.2.0.bin'),'auto','800',''],{stdio:'pipe',windowsHide:true});
+          child.stderr.on('data',d=>process.stderr.write(d));
+          child.stdout.on('data',d=>{pending+=d.toString();let at;while((at=pending.indexOf('\n'))>=0){const line=pending.slice(0,at);pending=pending.slice(at+1);const item=JSON.parse(line);events.push(item.type);console.log(JSON.stringify({elapsedMs:Date.now()-started,...item}));if(item.type==='ready'&&!fed){fed=true;child.stdin.end(pcm);}}});
+          const timer=setTimeout(()=>{timedOut=true;child.kill();},120000);
+          child.on('error',e=>{clearTimeout(timer);throw e;});
+          child.on('close',(code,signal)=>{clearTimeout(timer);console.log(JSON.stringify({elapsedMs:Date.now()-started,exitCode:code,signal,timedOut,events}));});
+          '@ | Set-Content -Encoding utf8 speech-timings.cjs
+          node speech-timings.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify actual packaged file dialogs and layout
+        working-directory: source
+        run: node test/desktop-packaged-dialogs.mjs
+      - name: Verify native speech
+        working-directory: source
+        run: node test/desktop-local-speech.mjs --native
+      - name: Verify file dialog contracts
+        working-directory: source
+        run: node test/unit-desktop-file-dialog.mjs
       - name: Verify speech inside the packaged application
         working-directory: source
         env:
           MOFFER_SPEECH_RUNTIME: desktop/dist/win-unpacked/resources/app.asar.unpacked/resources/local-speech
         run: node test/desktop-local-speech.mjs --native-only
-      - name: Verify actual packaged file dialogs and layout
-        working-directory: source
-        run: node test/desktop-packaged-dialogs.mjs
       - name: Record provenance and exact outputs
         working-directory: source
         shell: pwsh
