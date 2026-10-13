@@ -3,6 +3,11 @@ name: Build Windows Desktop
 on:
   workflow_dispatch:
     inputs:
+      checks_only:
+        description: Run native desktop checks without packaging installers
+        required: false
+        default: false
+        type: boolean
       source_sha:
         description: Exact reviewed private-source commit (40 hex characters)
         required: true
@@ -64,10 +69,22 @@ jobs:
       - name: Typecheck desktop
         working-directory: source/desktop
         run: npm run typecheck
+      - name: Verify desktop answer selection
+        working-directory: source
+        shell: pwsh
+        run: |
+          if (Test-Path test/desktop-auto-answer.mjs) {
+            node test/desktop-auto-answer.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node test/native/desktop-auto-answer.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Build native speech and Windows installer
+        if: ${{ !inputs.checks_only }}
         working-directory: source/desktop
         run: npm run build:win -- --publish never
       - name: Capture actual speech runtime timings
+        if: ${{ !inputs.checks_only }}
         working-directory: source
         shell: pwsh
         run: |
@@ -92,20 +109,25 @@ jobs:
           node speech-timings.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify actual packaged file dialogs and layout
+        if: ${{ !inputs.checks_only }}
         working-directory: source
         run: node test/native/desktop-packaged-dialogs.mjs
       - name: Verify native speech
+        if: ${{ !inputs.checks_only }}
         working-directory: source
         run: node test/desktop-local-speech.mjs --native
       - name: Verify file dialog contracts
+        if: ${{ !inputs.checks_only }}
         working-directory: source
         run: node test/unit-desktop-file-dialog.mjs
       - name: Verify speech inside the packaged application
+        if: ${{ !inputs.checks_only }}
         working-directory: source
         env:
           MOFFER_SPEECH_RUNTIME: desktop/dist/win-unpacked/resources/app.asar.unpacked/resources/local-speech
         run: node test/desktop-local-speech.mjs --native-only
       - name: Record provenance and exact outputs
+        if: ${{ !inputs.checks_only }}
         working-directory: source
         shell: pwsh
         env:
@@ -116,6 +138,7 @@ jobs:
           foreach ($file in $files) { if (!(Test-Path -LiteralPath $file)) { throw "Missing installer output: $file" } }
           @{ sourceCommit=$env:SOURCE_SHA; version=$env:PACKAGE_VERSION; platform='win32'; architecture='x64'; runId=$env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8 desktop/dist/build-info.json
       - name: Keep installer and validation evidence only
+        if: ${{ !inputs.checks_only }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-desktop-${{ inputs.version }}
@@ -129,7 +152,7 @@ jobs:
           retention-days: 3
           compression-level: 0
       - name: Keep failed dialog evidence
-        if: failure()
+        if: ${{ failure() && !inputs.checks_only }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-dialog-failure-${{ inputs.version }}
