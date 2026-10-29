@@ -1,0 +1,14 @@
+{
+  "name": "moffer",
+  "description": "Moffer 官方插件",
+  "owner": {
+    "name": "Moffer"
+  },
+  "plugins": [
+    {
+      "name": "moffer-desktop",
+      "source": "./plugins/moffer-desktop",
+      "description": "让 AI 帮你安装、更新 Moffer 桌面端"
+    }
+  ]
+}

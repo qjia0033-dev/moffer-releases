@@ -1,0 +1,10 @@
+{
+  "name": "moffer-desktop",
+  "version": "1.0.0",
+  "description": "让 AI 帮你安装、更新 Moffer 桌面端（Apple 芯片 Mac / 64 位 Windows）",
+  "author": {
+    "name": "Moffer",
+    "url": "https://www.moffer.today"
+  },
+  "homepage": "https://www.moffer.today/download"
+}
